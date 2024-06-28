@@ -446,24 +446,15 @@ class FullyConnectedOperatorTester {
     std::vector<uint16_t> output((batch_size() - 1) * output_stride() + output_channels());
     std::vector<float> output_ref(batch_size() * output_channels());
     std::vector<xnn_qd8_quantization_params> quantization_params(batch_size() + XNN_EXTRA_QUANTIZATION_PARAMS);
-    std::vector<float> kernel_scale(output_channels());
     size_t num_blocks = k2 / block_size();
     std::vector<float> kernel_scale2d(output_channels() * num_blocks);
 
-    for (size_t iteration = 0; iteration < 1 /* iterations() */; iteration++) {
+    for (size_t iteration = 0; iteration < iterations(); iteration++) {
       std::generate(input.begin(), input.end(), [&]() { return w8dist(rng); });
-      // std::fill(input.begin(), input.end(), 0x5A);
       std::generate(kernel.begin(), kernel.end(), [&]() { return w8dist(rng); });
-      // std::fill(kernel.begin(), kernel.end(), 0x5A);
       std::generate(bias.begin(), bias.end(), [&]() { return f32dist(rng); });
-      // std::fill(bias.begin(), bias.end(), 2.0);
 
-      // TODO - update reference calculations to actually do blockwise quant. Keeping the scales same for now.
-      float kScale = 2.12334455;
-      // std::generate(kernel_scale.begin(), kernel_scale.end(), [&]() { return f32idist(rng); });
-      std::fill(kernel_scale.begin(), kernel_scale.end(), kScale);
-      // std::generate(kernel_scale2d.begin(), kernel_scale2d.end(), [&]() { return f32idist(rng); });
-      std::fill(kernel_scale2d.begin(), kernel_scale2d.end(), kScale);
+      std::generate(kernel_scale2d.begin(), kernel_scale2d.end(), [&]() { return f32idist(rng); });
       std::generate(quantization_params.begin(), quantization_params.end(), [&]() { return xnn_qd8_quantization_params{w8dist(rng), f32idist(rng)}; });
       for (size_t i = batch_size(); i < batch_size() + XNN_EXTRA_QUANTIZATION_PARAMS; ++i) {
         quantization_params[i].zero_point = quantization_params[batch_size() - 1].zero_point;
@@ -477,38 +468,28 @@ class FullyConnectedOperatorTester {
       // TODO: Not supported right now.
       assert (transpose_weights() == false);
 
-      if (transpose_weights()) {
-        for (size_t mi = 0; mi < batch_size(); mi++) {
-          for (size_t ni = 0; ni < output_channels(); ni++) {
-            for (size_t ki = 0; ki < input_channels(); ki++) {
-              const size_t kernel_index = ki * kernel_stride + (ni / 2);
-              const int8_t kernel_value =
-                int8_t((ni % 2 == 0) ? (kernel[kernel_index] & 15) : (kernel[kernel_index] >> 4)) - kernel_zero_point();
-              output_ref[mi * output_channels() + ni] +=
-                  (int32_t(input[mi * input_stride() + ki]) - quantization_params[mi].zero_point) *
-                  static_cast<float>(static_cast<int32_t>(kernel_value));
+      for (size_t mi = 0; mi < batch_size(); mi++) {
+        for (size_t ni = 0; ni < output_channels(); ni++) {
+          float kfsum = 0.0;
+          for (size_t bi = 0; bi < num_blocks; bi++) {
+            int32_t ksum = 0;
+            int32_t c_ref_acc = 0;
+            for (size_t ki = 0; ki < block_size(); ki++) {
+              const size_t k_index =  bi * block_size() + ki;
+              const size_t nb_index = (ni * k2 + k_index) / 2;
+              const int32_t kernel_value = int32_t((k_index % 2 == 0) ? (kernel[nb_index] & UINT8_C(0xF)) : (kernel[nb_index] >> 4)) - kernel_zero_point();
+              ksum += kernel_value;
+              c_ref_acc += int32_t(input[mi * input_stride() + k_index]) * static_cast<float>(kernel_value);
             }
-            output_ref[mi * output_channels() + ni] *= quantization_params[mi].inv_scale * kernel_scale[ni];
-            if (has_bias()) {
-              output_ref[mi * output_channels() + ni] += bias[ni];
-            }
+            size_t scale_index = ni * num_blocks + bi;
+            float scale = kernel_scale2d[scale_index];
+            output_ref[mi * output_channels() + ni] += c_ref_acc * scale;
+            kfsum += scale * ksum;
           }
-        }
-      } else {
-        for (size_t mi = 0; mi < batch_size(); mi++) {
-          for (size_t ni = 0; ni < output_channels(); ni++) {
-            for (size_t ki = 0; ki < input_channels(); ki++) {
-              const size_t kernel_index = ni * kernel_stride + (ki / 2);
-              const int8_t kernel_value =
-                int8_t((ki % 2 == 0) ? (kernel[kernel_index] & 15) : (kernel[kernel_index] >> 4)) - kernel_zero_point();
-              output_ref[mi * output_channels() + ni] +=
-                  (int32_t(input[mi * input_stride() + ki]) - quantization_params[mi].zero_point) *
-                  static_cast<float>(static_cast<int32_t>(kernel_value));
-            }
-            output_ref[mi * output_channels() + ni] *= quantization_params[mi].inv_scale * kernel_scale[ni];
-            if (has_bias()) {
-              output_ref[mi * output_channels() + ni] += bias[ni];
-            }
+          output_ref[mi * output_channels() + ni] -= (quantization_params[mi].zero_point * kfsum);
+          output_ref[mi * output_channels() + ni] *= quantization_params[mi].inv_scale;
+          if (has_bias()) {
+            output_ref[mi * output_channels() + ni] += bias[ni];
           }
         }
       }
@@ -584,7 +565,7 @@ class FullyConnectedOperatorTester {
         xnn_run_operator(fully_connected_op, /*threadpool=*/nullptr));
 
       // Verify results.
-      VerifyF16(output, output_ref, output_max, output_min);
+      VerifyF16(output, output_ref, output_max, output_min, /*atol=*/2.0e-3, /*rtol=*/1.0e-2);
 
       if (use_weights_cache()) {
         // Create another operator with the same weights cache.
@@ -628,7 +609,7 @@ class FullyConnectedOperatorTester {
 
         VerifyWeightsCache(*internal_weights_cache, old_weights_cache_size);
 
-        VerifyF16(output2, output_ref, output_max, output_min);
+        VerifyF16(output, output_ref, output_max, output_min, /*atol=*/2.0e-3, /*rtol=*/1.0e-2);
       }
     }
   }
@@ -847,24 +828,15 @@ class FullyConnectedOperatorTester {
     std::vector<float> output((batch_size() - 1) * output_stride() + output_channels());
     std::vector<float> output_ref(batch_size() * output_channels());
     std::vector<xnn_qd8_quantization_params> quantization_params(batch_size() + XNN_EXTRA_QUANTIZATION_PARAMS);
-    std::vector<float> kernel_scale(output_channels());
     size_t num_blocks = k2 / block_size();
     std::vector<float> kernel_scale2d(output_channels() * num_blocks);
 
-    for (size_t iteration = 0; iteration < 1 /* iterations() */; iteration++) {
+    for (size_t iteration = 0; iteration < iterations(); iteration++) {
       std::generate(input.begin(), input.end(), [&]() { return w8dist(rng); });
-      // std::fill(input.begin(), input.end(), 0x5A);
       std::generate(kernel.begin(), kernel.end(), [&]() { return w8dist(rng); });
-      // std::fill(kernel.begin(), kernel.end(), 0x5A);
       std::generate(bias.begin(), bias.end(), [&]() { return f32dist(rng); });
-      // std::fill(bias.begin(), bias.end(), 2.0);
 
-      // TODO - update reference calculations to actually do blockwise quant. Keeping the scales same for now.
-      float kScale = 2.12334455;
-      // std::generate(kernel_scale.begin(), kernel_scale.end(), [&]() { return f32idist(rng); });
-      std::fill(kernel_scale.begin(), kernel_scale.end(), kScale);
-      // std::generate(kernel_scale2d.begin(), kernel_scale2d.end(), [&]() { return f32idist(rng); });
-      std::fill(kernel_scale2d.begin(), kernel_scale2d.end(), kScale);
+      std::generate(kernel_scale2d.begin(), kernel_scale2d.end(), [&]() { return f32idist(rng); });
       std::generate(quantization_params.begin(), quantization_params.end(), [&]() { return xnn_qd8_quantization_params{w8dist(rng), f32idist(rng)}; });
       for (size_t i = batch_size(); i < batch_size() + XNN_EXTRA_QUANTIZATION_PARAMS; ++i) {
         quantization_params[i].zero_point = quantization_params[batch_size() - 1].zero_point;
@@ -878,38 +850,28 @@ class FullyConnectedOperatorTester {
       // TODO: Not supported right now.
       assert (transpose_weights() == false);
 
-      if (transpose_weights()) {
-        for (size_t mi = 0; mi < batch_size(); mi++) {
-          for (size_t ni = 0; ni < output_channels(); ni++) {
-            for (size_t ki = 0; ki < input_channels(); ki++) {
-              const size_t kernel_index = ki * kernel_stride + (ni / 2);
-              const int8_t kernel_value =
-                int8_t((ni % 2 == 0) ? (kernel[kernel_index] & 15) : (kernel[kernel_index] >> 4)) - kernel_zero_point();
-              output_ref[mi * output_channels() + ni] +=
-                  (int32_t(input[mi * input_stride() + ki]) - quantization_params[mi].zero_point) *
-                  static_cast<float>(static_cast<int32_t>(kernel_value));
+      for (size_t mi = 0; mi < batch_size(); mi++) {
+        for (size_t ni = 0; ni < output_channels(); ni++) {
+          float kfsum = 0.0;
+          for (size_t bi = 0; bi < num_blocks; bi++) {
+            int32_t ksum = 0;
+            int32_t c_ref_acc = 0;
+            for (size_t ki = 0; ki < block_size(); ki++) {
+              const size_t k_index =  bi * block_size() + ki;
+              const size_t nb_index = (ni * k2 + k_index) / 2;
+              const int32_t kernel_value = int32_t((k_index % 2 == 0) ? (kernel[nb_index] & UINT8_C(0xF)) : (kernel[nb_index] >> 4)) - kernel_zero_point();
+              ksum += kernel_value;
+              c_ref_acc += int32_t(input[mi * input_stride() + k_index]) * static_cast<float>(kernel_value);
             }
-            output_ref[mi * output_channels() + ni] *= quantization_params[mi].inv_scale * kernel_scale[ni];
-            if (has_bias()) {
-              output_ref[mi * output_channels() + ni] += bias[ni];
-            }
+            size_t scale_index = ni * num_blocks + bi;
+            float scale = kernel_scale2d[scale_index];
+            output_ref[mi * output_channels() + ni] += c_ref_acc * scale;
+            kfsum += scale * ksum;
           }
-        }
-      } else {
-        for (size_t mi = 0; mi < batch_size(); mi++) {
-          for (size_t ni = 0; ni < output_channels(); ni++) {
-            for (size_t ki = 0; ki < input_channels(); ki++) {
-              const size_t kernel_index = ni * kernel_stride + (ki / 2);
-              const int8_t kernel_value =
-                int8_t((ki % 2 == 0) ? (kernel[kernel_index] & 15) : (kernel[kernel_index] >> 4)) - kernel_zero_point();
-              output_ref[mi * output_channels() + ni] +=
-                  (int32_t(input[mi * input_stride() + ki]) - quantization_params[mi].zero_point) *
-                  static_cast<float>(static_cast<int32_t>(kernel_value));
-            }
-            output_ref[mi * output_channels() + ni] *= quantization_params[mi].inv_scale * kernel_scale[ni];
-            if (has_bias()) {
-              output_ref[mi * output_channels() + ni] += bias[ni];
-            }
+          output_ref[mi * output_channels() + ni] -= (quantization_params[mi].zero_point * kfsum);
+          output_ref[mi * output_channels() + ni] *= quantization_params[mi].inv_scale;
+          if (has_bias()) {
+            output_ref[mi * output_channels() + ni] += bias[ni];
           }
         }
       }
@@ -985,7 +947,7 @@ class FullyConnectedOperatorTester {
         xnn_run_operator(fully_connected_op, /*threadpool=*/nullptr));
 
       // Verify results.
-      VerifyF32(output, output_ref, output_max, output_min);
+      VerifyF32(output, output_ref, output_max, output_min, /*rtol=*/2e-3, /*atol=*/2e-3);
 
       if (use_weights_cache()) {
         // Create another operator with the same weights cache.
@@ -1029,7 +991,7 @@ class FullyConnectedOperatorTester {
 
         VerifyWeightsCache(*internal_weights_cache, old_weights_cache_size);
 
-        VerifyF32(output, output_ref, output_max, output_min);
+        VerifyF32(output, output_ref, output_max, output_min, /*rtol=*/2e-3, /*atol=*/2e-3);
       }
     }
   }
@@ -2175,7 +2137,9 @@ class FullyConnectedOperatorTester {
   void VerifyF32(const std::vector<float>& output,
                  const std::vector<float>& output_ref,
                  float output_max,
-                 float output_min) const {
+                 float output_min,
+                 float atol = 1.0e-4,
+                 float rtol = 1.0e-4) const {
     // Verify results.
     for (size_t i = 0; i < batch_size(); i++) {
       for (size_t c = 0; c < output_channels(); c++) {
@@ -2185,7 +2149,7 @@ class FullyConnectedOperatorTester {
             << "batch index = " << i << ", channel = " << c;
         EXPECT_NEAR(output_ref[i * output_channels() + c],
                     output[i * output_stride() + c],
-                    std::max(1.0e-4 * std::abs(output_ref[i * output_channels() + c]), 1.0e-4))
+                    std::max(rtol * std::abs(output_ref[i * output_channels() + c]), atol))
             << "batch index = " << i << ", channel = " << c;
       }
     }
@@ -2795,7 +2759,9 @@ class FullyConnectedOperatorTester {
   void VerifyF16(const std::vector<uint16_t>& output,
                  const std::vector<float>& output_ref,
                  const float output_max,
-                 const float output_min) const {
+                 const float output_min,
+                 const float atol = 1e-4f,
+                 const float rtol = 1.0e-2f) const {
     for (size_t i = 0; i < batch_size(); i++) {
       for (size_t c = 0; c < output_channels(); c++) {
         // FP16 overflows, it's the nature of the beast. If both reference and
@@ -2809,7 +2775,7 @@ class FullyConnectedOperatorTester {
           << "batch index = " << i << ", channel = " << c;
         ASSERT_GE(fp16_ieee_to_fp32_value(output[i * output_stride() + c]), output_min)
           << "batch index = " << i << ", channel = " << c;
-        const float tolerance = std::max(1e-4f, 1.0e-2f * std::abs(output_ref[i * output_channels() + c]));
+        const float tolerance = std::max(atol, rtol * std::abs(output_ref[i * output_channels() + c]));
         EXPECT_NEAR(
             output_ref[i * output_channels() + c],
             fp16_ieee_to_fp32_value(output[i * output_stride() + c]),
