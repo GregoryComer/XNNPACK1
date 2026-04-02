@@ -81,6 +81,22 @@ static enum xnn_status create_convert_operator(
           break;
       }
       break;
+    case xnn_datatype_bf16:
+      switch (output_datatype) {
+        case xnn_datatype_qdint8:
+          status = xnn_create_convert_nc_bf16_qd8(
+              node->flags,
+              &opdata->operator_objects[0]);
+          break;
+        case xnn_datatype_qduint8:
+          status = xnn_create_convert_nc_bf16_qdu8(
+              node->flags,
+              &opdata->operator_objects[0]);
+          break;
+        default:
+          break;
+      }
+      break;
     default:
       break;
   }
@@ -148,6 +164,22 @@ static enum xnn_status reshape_convert_operator(
     }
     case xnn_operator_type_convert_nc_f16_qdu8: {
       status = xnn_reshape_convert_nc_f16_qdu8(
+        opdata->operator_objects[0],
+        dq_batch_size,
+        /*channels=*/dq_channel_stride, /*input_stride=*/dq_channel_stride,  /*output_stride=*/dq_channel_stride,
+        threadpool);
+      break;
+    }
+    case xnn_operator_type_convert_nc_bf16_qd8: {
+      status = xnn_reshape_convert_nc_bf16_qd8(
+        opdata->operator_objects[0],
+        dq_batch_size,
+        /*channels=*/dq_channel_stride, /*input_stride=*/dq_channel_stride,  /*output_stride=*/dq_channel_stride,
+        threadpool);
+      break;
+    }
+    case xnn_operator_type_convert_nc_bf16_qdu8: {
+      status = xnn_reshape_convert_nc_bf16_qdu8(
         opdata->operator_objects[0],
         dq_batch_size,
         /*channels=*/dq_channel_stride, /*input_stride=*/dq_channel_stride,  /*output_stride=*/dq_channel_stride,
@@ -233,6 +265,24 @@ static enum xnn_status setup_convert_operator(
       return xnn_setup_convert_nc_f16_qdu8(opdata->operator_objects[0],
                                            input_data, output_data, row_sum,
                                            quantization_params);
+    }
+    case xnn_operator_type_convert_nc_bf16_qd8:
+    {
+      void* quantization_params = output_value->quantization.dynamic_params;
+      void* row_sum = output_value->quantization.row_sum;
+      assert(quantization_params != NULL);
+      return xnn_setup_convert_nc_bf16_qd8(opdata->operator_objects[0],
+                                           input_data, output_data, row_sum,
+                                           quantization_params);
+    }
+    case xnn_operator_type_convert_nc_bf16_qdu8:
+    {
+      void* quantization_params = output_value->quantization.dynamic_params;
+      void* row_sum = output_value->quantization.row_sum;
+      assert(quantization_params != NULL);
+      return xnn_setup_convert_nc_bf16_qdu8(opdata->operator_objects[0],
+                                            input_data, output_data, row_sum,
+                                            quantization_params);
     }
     case xnn_operator_type_convert_nc_f32_qdu8:
     {
