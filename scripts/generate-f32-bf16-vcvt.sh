@@ -4,6 +4,10 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+#################################### SSE4.1 ###################################
+tools/xngen src/f32-bf16-vcvt/sse41.c.in -D BATCH_TILE=4  -o src/f32-bf16-vcvt/gen/f32-bf16-vcvt-sse41-u4.c &
+tools/xngen src/f32-bf16-vcvt/sse41.c.in -D BATCH_TILE=8  -o src/f32-bf16-vcvt/gen/f32-bf16-vcvt-sse41-u8.c &
+
 ################################## AVX512SKX ##################################
 tools/xngen src/f32-bf16-vcvt/avx512skx.c.in -D BATCH_TILE=16 -o src/f32-bf16-vcvt/gen/f32-bf16-vcvt-avx512skx-u16.c &
 tools/xngen src/f32-bf16-vcvt/avx512skx.c.in -D BATCH_TILE=32 -o src/f32-bf16-vcvt/gen/f32-bf16-vcvt-avx512skx-u32.c &

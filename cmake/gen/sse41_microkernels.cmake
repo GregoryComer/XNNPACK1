@@ -10,8 +10,10 @@
 
 
 SET(PROD_SSE41_MICROKERNEL_SRCS
+  src/bf16-f32-vcvt/gen/bf16-f32-vcvt-sse41-u4.c
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int16-u16.c
   src/f16-maxpool/gen/f16-maxpool-9p-minmax-sse41-u8.c
+  src/f32-bf16-vcvt/gen/f32-bf16-vcvt-sse41-u4.c
   src/f32-f16-vcvt/gen/f32-f16-vcvt-sse41-u8.c
   src/f32-qc4w-gemm/gen/f32-qc4w-gemm-1x8-minmax-sse41-dup.c
   src/f32-qc4w-gemm/gen/f32-qc4w-gemm-4x8-minmax-sse41-dup.c
@@ -72,6 +74,7 @@ SET(PROD_SSE41_MICROKERNEL_SRCS
   src/u8-ibilinear/gen/u8-ibilinear-sse41-u16.c)
 
 SET(NON_PROD_SSE41_MICROKERNEL_SRCS
+  src/bf16-f32-vcvt/gen/bf16-f32-vcvt-sse41-u8.c
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int16-u8.c
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int16-u24.c
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int16-u32.c
@@ -79,6 +82,7 @@ SET(NON_PROD_SSE41_MICROKERNEL_SRCS
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int32-u16.c
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int32-u24.c
   src/f16-f32-vcvt/gen/f16-f32-vcvt-sse41-int32-u32.c
+  src/f32-bf16-vcvt/gen/f32-bf16-vcvt-sse41-u8.c
   src/f32-f16-vcvt/gen/f32-f16-vcvt-sse41-u16.c
   src/f32-f16-vcvt/gen/f32-f16-vcvt-sse41-u24.c
   src/f32-f16-vcvt/gen/f32-f16-vcvt-sse41-u32.c

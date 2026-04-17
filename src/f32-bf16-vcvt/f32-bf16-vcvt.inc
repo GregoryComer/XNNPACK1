@@ -16,6 +16,10 @@ XNN_UKERNEL(xnn_arch_arm_neon_bf16, xnn_f32_bf16_vcvt_ukernel__neonbf16_u16, 16,
 #endif  // XNN_ENABLE_ARM_BF16
 #endif  // XNN_ARCH_ARM || XNN_ARCH_ARM64
 
+#if XNN_ENABLE_SSE41 && (XNN_ARCH_X86 || XNN_ARCH_X86_64)
+XNN_UKERNEL(xnn_arch_x86_sse4_1, xnn_f32_bf16_vcvt_ukernel__sse41_u4, 4, false, float, xnn_bfloat16, void, NULL)
+XNN_UKERNEL(xnn_arch_x86_sse4_1, xnn_f32_bf16_vcvt_ukernel__sse41_u8, 8, false, float, xnn_bfloat16, void, NULL)
+#endif  // XNN_ENABLE_SSE41 && (XNN_ARCH_X86 || XNN_ARCH_X86_64)
 #if XNN_ENABLE_AVX512SKX && (XNN_ARCH_X86 || XNN_ARCH_X86_64)
 XNN_UKERNEL(xnn_arch_x86_avx512skx, xnn_f32_bf16_vcvt_ukernel__avx512skx_u16, 16, false, float, xnn_bfloat16, void, NULL)
 XNN_UKERNEL(xnn_arch_x86_avx512skx, xnn_f32_bf16_vcvt_ukernel__avx512skx_u32, 32, false, float, xnn_bfloat16, void, NULL)
